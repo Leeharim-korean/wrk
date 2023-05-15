@@ -15,27 +15,46 @@
 #include "stats.h"
 #include "ae.h"
 #include "http_parser.h"
+#include "hdr_histogram.h"
 
+#define VERSION  "4.0.0"
 #define RECVBUF  8192
+#define SAMPLES  100000000
 
-#define MAX_THREAD_RATE_S   10000000
 #define SOCKET_TIMEOUT_MS   2000
-#define RECORD_INTERVAL_MS  100
+#define CALIBRATE_DELAY_MS  10000
+#define TIMEOUT_INTERVAL_MS 2000
 
-extern const char *VERSION;
+#define MAXL 1000000
+#define MAXO 65535
+#define MAXTHREADS 40
+
 
 typedef struct {
     pthread_t thread;
     aeEventLoop *loop;
     struct addrinfo *addr;
     uint64_t connections;
+    int interval;
+    uint64_t tid;
+    uint64_t stop_at;
     uint64_t complete;
+    uint64_t sent;
     uint64_t requests;
+    uint64_t monitored;
+    uint64_t target;
+    uint64_t accum_latency;
     uint64_t bytes;
     uint64_t start;
+    double throughput;
+    uint64_t mean;
+    struct hdr_histogram *latency_histogram;
+    struct hdr_histogram *real_latency_histogram;
+    tinymt64_t rand;
     lua_State *L;
     errors errors;
     struct connection *cs;
+    FILE* ff;
 } thread;
 
 typedef struct {
@@ -52,7 +71,13 @@ typedef struct connection {
     } state;
     int fd;
     SSL *ssl;
-    bool delayed;
+    double throughput;
+    uint64_t interval;
+    uint64_t sent;
+    uint64_t estimate;
+    uint64_t complete;
+    uint64_t thread_start;
+    uint64_t thread_next;
     uint64_t start;
     char *request;
     size_t length;
@@ -61,6 +86,8 @@ typedef struct connection {
     buffer headers;
     buffer body;
     char buf[RECVBUF];
+    uint64_t actual_latency_start[MAXO+1];
+    // Internal tracking numbers (used purely for debugging):
 } connection;
 
 #endif /* WRK_H */
